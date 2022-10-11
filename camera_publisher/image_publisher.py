@@ -36,8 +36,8 @@ class ImagePublisherNode(Node):
         self._img_topic = self.get_parameter('img_topic').get_parameter_value().string_value
         self._caminfo_topic = self.get_parameter('caminfo_topic').get_parameter_value().string_value
 
-        self._img_publisher = self.create_publisher(Image, self._img_topic, 10)
-        self._caminfo_publisher = self.create_publisher(CameraInfo, self._caminfo_topic, 10)
+        self._img_publisher = self.create_publisher(Image, f"{self._camera_name}/{self._img_topic}", 10)
+        self._caminfo_publisher = self.create_publisher(CameraInfo, f"{self._camera_name}/{self._caminfo_topic}", 10)
 
         self._bridge = CvBridge()
 
