@@ -1,3 +1,6 @@
+from ssl import SOL_SOCKET
+import threading
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
@@ -5,22 +8,25 @@ from sensor_msgs.msg import Image, CameraInfo
 import cv2
 from cv_bridge import CvBridge
 
-class CameraPublisherNode(Node):
+import numpy as np
 
+import socket
+import select
+
+class CameraPublisherNode(Node):
+	
 	def __init__(self):
 		super().__init__('image_publisher')
 
 		self.declare_parameters(
 			namespace='',
 			parameters= [
-				('camera_id', 0),
 				('caminfo_file', ''),
 				('camera_name', 'camera'),
 				('img_topic', 'image_rect'),
 				('caminfo_topic', 'camera_info')
 			]
 		)
-		self._camera_id = self.get_parameter('camera_id').get_parameter_value().integer_value
 		self._caminfo_file = self.get_parameter('caminfo_file').get_parameter_value().string_value
 		self._camera_name = self.get_parameter('camera_name').get_parameter_value().string_value
 		self._img_topic = self.get_parameter('img_topic').get_parameter_value().string_value
@@ -30,8 +36,6 @@ class CameraPublisherNode(Node):
 		self._caminfo_publisher = self.create_publisher(CameraInfo, f"{self._camera_name}/{self._caminfo_topic}", 10)
 
 		self._bridge = CvBridge()
-
-		self._vidcap = cv2.VideoCapture(self._camera_id)
 
 		fs = cv2.FileStorage()
 		fs.open(self._caminfo_file, cv2.FILE_STORAGE_READ)
@@ -46,18 +50,38 @@ class CameraPublisherNode(Node):
 		self._caminfo.r = fs.getNode('rectification_matrix').mat().flatten().tolist()
 		self._caminfo.p = fs.getNode('projection_matrix').mat().flatten().tolist()
 
-		self._t = self.create_timer(1/30, self.pub_timer)
+		self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self._socket.setsockopt(SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		self._socket.bind(("localhost", 1100))
+		self._socket.listen()
+		self._client, self._addr = self._socket.accept()
+		self._t = threading.Thread(target = self.client_handler)
+		self._t.start()
 
-	def pub_timer(self):
-		ret, frame = self._vidcap.read()
-		self._image = self._bridge.cv2_to_imgmsg(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 'mono8')
-		self._image.header.frame_id = self._camera_name
-		t = self.get_clock().now().to_msg()
-		self._image.header.stamp = t
-		self._caminfo.header.stamp = t
+	def client_handler(self):
+		try:
+			while True:
+				readable, _, _ = select.select([self._client], [], [])
+				if readable:
+					data = self._client.recv(self._caminfo.height*self._caminfo.width*4)
+					if not (len(data) == self._caminfo.height*self._caminfo.width*4):
+						continue
+					im = np.frombuffer(data, np.uint8)
 
-		self._img_publisher.publish(self._image)
-		self._caminfo_publisher.publish(self._caminfo)
+					#reshape into opencv image format
+					img_array = np.reshape(im,(self._caminfo.height,self._caminfo.width,4))
+
+					#convert to rospy and publish
+					self._image = self._bridge.cv2_to_imgmsg(cv2.cvtColor(img_array, cv2.COLOR_BGRA2GRAY), "mono8")
+					self._image.header.frame_id = self._camera_name
+					t = self.get_clock().now().to_msg()
+					self._image.header.stamp = t
+					self._caminfo.header.stamp = t
+
+					self._img_publisher.publish(self._image)
+					self._caminfo_publisher.publish(self._caminfo)
+		finally:
+			self._client.close()
 
 def main(args = None):
 	rclpy.init(args=args)

@@ -26,7 +26,8 @@ setup(
     entry_points={
         'console_scripts': [
             'image_publisher = camera_publisher.image_publisher:main',
-            'camera_publisher = camera_publisher.camera_publisher:main'
+            'camera_publisher = camera_publisher.camera_publisher:main',
+            'webots_camera_publisher = camera_publisher.webots_camera_publisher:main'
         ],
     },
 )
